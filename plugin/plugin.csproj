@@ -6,8 +6,8 @@
         <Version>1.0.0</Version>
         <Authors>Niko666</Authors>
         <AssemblyTitle>Adaptive_Trigger_For_PSVR2</AssemblyTitle>
-        <Description>Implemented some Adaptive Trigger effects for PSVR2 Sense controllers. REQUIRE PSVR2 Toolkit TO USE!</Description>
-        <PackageProjectUrl></PackageProjectUrl>
+        <Description>Implemented some Adaptive Trigger effects for for chad PSVR2 controller enjoyers. REQUIRES PSVR2 Toolkit TO USE!</Description>
+        <PackageProjectUrl>https://github.com/Niko666233/Adaptive_Trigger_For_PSVR2</PackageProjectUrl>
     </PropertyGroup>
 
     <!-- Probably don't need to touch these -->
