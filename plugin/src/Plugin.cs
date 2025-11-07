@@ -202,10 +202,10 @@ namespace Niko666
                 {
                     if (AdaptiveTrigger.UseVibrationFeedbackForRecoil.Value)
                     {
-                        IpcClient.Instance().TriggerEffectVibration(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, 4, AdaptiveTrigger.RecoilFeedbackStrength.Value, AdaptiveTrigger.VibrationFrequency.Value);
+                        IpcClient.Instance().TriggerEffectVibration(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, (byte)(startPos - 1), AdaptiveTrigger.RecoilFeedbackStrength.Value, AdaptiveTrigger.VibrationFrequency.Value);
                     }
                     else
-                        IpcClient.Instance().TriggerEffectFeedback(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, 1, AdaptiveTrigger.RecoilFeedbackStrength.Value);
+                        IpcClient.Instance().TriggerEffectFeedback(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, (byte)(startPos - 1), AdaptiveTrigger.RecoilFeedbackStrength.Value);
                     if (__instance.m_hand.m_buzztime > 0.02f)
                     {
                         IpcClient.Instance().TriggerEffectSlopeFeedback(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, (byte)(startPos - 1), (byte)(endPos - 1), 1, AdaptiveTrigger.ClickyEffectStrength.Value);

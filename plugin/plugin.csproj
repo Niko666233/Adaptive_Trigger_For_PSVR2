@@ -6,7 +6,7 @@
         <Version>1.0.0</Version>
         <Authors>Niko666</Authors>
         <AssemblyTitle>Adaptive_Trigger_For_PSVR2</AssemblyTitle>
-        <Description>Implemented some Adaptive Trigger effects for for chad PSVR2 controller enjoyers. REQUIRES PSVR2 Toolkit TO USE!</Description>
+        <Description>Implemented some Adaptive Trigger effects for chad PSVR2 controller enjoyers. REQUIRES PSVR2 Toolkit TO USE!</Description>
         <PackageProjectUrl>https://github.com/Niko666233/Adaptive_Trigger_For_PSVR2</PackageProjectUrl>
     </PropertyGroup>
 
@@ -24,6 +24,7 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <NuGetAuditMode>all</NuGetAuditMode>
         <NuGetAudit>False</NuGetAudit>
+		<IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     </PropertyGroup>
 
     <!-- Debug configuration overrides -->
@@ -53,6 +54,22 @@
         <PackageReference Include="UnityEngine" Version="5.6.1" />
         <PackageReference Include="BepInEx.Core" Version="5.4.17" />
         <PackageReference Include="H3VR.GameLibs" Version="0.111.5" />
+    </ItemGroup>
+    <ItemGroup>
+      <Compile Update="Properties\Settings.Designer.cs">
+        <DesignTimeSharedInput>True</DesignTimeSharedInput>
+        <AutoGen>True</AutoGen>
+        <DependentUpon>Settings.settings</DependentUpon>
+      </Compile>
+    </ItemGroup>
+    <ItemGroup>
+      <None Update="Properties\Settings.settings">
+        <Generator>SettingsSingleFileGenerator</Generator>
+        <LastGenOutput>Settings.Designer.cs</LastGenOutput>
+      </None>
+      <None Update="System.Threading.Tasks.NET35.dll">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
     </ItemGroup>
 
     <!-- When in debug mode, also build mono debugging symbols (Only available on Windows) -->

@@ -12,6 +12,7 @@ For those who use PSVR2 but didn't know, you can use [PSVR2 Toolkit](https://git
 - You need to install [PSVR2 Toolkit](https://github.com/BnuuySolutions/PSVR2Toolkit) for this mod to function!
 - My [![State-of-the-art Shitcode](https://img.shields.io/static/v1?label=State-of-the-art&message=Shitcode&color=7B5804)](https://github.com/trekhleb/state-of-the-art-shitcode) will make controllers' battery life drains considerably faster
 - No per-weapon (type) configurations
+- No proper dual stage trigger simulation currently
 - Can't remove left hand trigger effect (It's toolkit's bug so I can't fix this)
 
 ## I Asked Myself These Questions
