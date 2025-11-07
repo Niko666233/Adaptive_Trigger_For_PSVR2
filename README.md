@@ -28,6 +28,7 @@ For those who use PSVR2 but didn't know, you can use [PSVR2 Toolkit](https://git
 
 - [PSVR2 Toolkit](https://github.com/BnuuySolutions/PSVR2Toolkit)
 - [GTFO VR Plugin](https://github.com/uzugu/GTFO_VR_Plugin) where I stole a bunch of codes from
+- [OpenScripts2](https://github.com/cityrobo/OpenScripts2) where I stole another bunch of codes from
 - [H3VRPluginTemplate](https://github.com/H3VR-Modding/H3VRPluginTemplate)
 - Everybody in H3VR community
 - You
