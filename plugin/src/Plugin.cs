@@ -110,7 +110,7 @@ namespace Niko666
         [HarmonyPostfix]
         public static void GlobalRecoilEffect(FVRFireArm __instance)
         {
-            byte startPos = 3;
+            byte startPos = 2;
             byte endPos = 7;
             bool hasSetEffect2 = false;
             if (__instance.m_hand != null)
@@ -192,7 +192,7 @@ namespace Niko666
                             endPos = (byte)(w.TriggerFiringThreshold * 10 - 1);
                             break;
                         default:
-                            startPos = (byte)3;
+                            startPos = (byte)2;
                             endPos = (byte)7;
                             break;
                     }
