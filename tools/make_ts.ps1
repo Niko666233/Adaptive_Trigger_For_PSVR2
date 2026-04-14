@@ -19,10 +19,10 @@ $PluginAuthor = (Select-Xml -Xml $ProjectXml -XPath "//Authors").Node.InnerText
 
 # Also try to find any additional files to include from the csproj file
 $ExtraFiles = (Select-Xml -Xml $ProjectXml -XPath "//CopyToOutputDirectory") |
-                Select-Object -ExpandProperty Node |
-                Where-Object { $_.InnerText -ne "Never" } |
-                Select-Object -ExpandProperty ParentNode |
-                Select-Object -ExpandProperty Update
+Select-Object -ExpandProperty Node |
+Where-Object { $_.InnerText -ne "Never" } |
+Select-Object -ExpandProperty ParentNode |
+Select-Object -ExpandProperty Update
 
 # Make a temporary folder to write our files into
 $TempDir = Join-Path $RootDir "temp/"
@@ -33,13 +33,13 @@ New-Item -ItemType Directory -Path $TempDir | Out-Null
 Copy-Item (Join-Path $RootDir "manifest.json") $TempDir
 Copy-Item (Join-Path $RootDir "icon.png") $TempDir
 Copy-Item (Join-Path $RootDir "README.md") $TempDir
+Copy-Item (Join-Path $RootDir "CHANGELOG.md") $TempDir
 Copy-Item (Join-Path $RootDir "LICENSE") $TempDir -ErrorAction Ignore
 Copy-Item "${OutputPath}${PluginName}.dll" $TempDir
 Copy-Item "${OutputPath}${PluginName}.dll.mdb" $TempDir -ErrorAction Ignore
 
 # Copy all our extra files into the output dir
-foreach ($ExtraFile in $ExtraFiles)
-{
+foreach ($ExtraFile in $ExtraFiles) {
     # Powershell won't automatically make subfolder for us so have to do this.
     $DestinationFile = Join-Path $TempDir $ExtraFile
     $DestinationDirectory = Split-Path -Parent $DestinationFile
