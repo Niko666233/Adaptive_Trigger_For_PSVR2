@@ -22,6 +22,8 @@ namespace Niko666
         public static ConfigEntry<byte> DefaultStartPos;
         public static ConfigEntry<byte> DefaultEndPos;
         public static int _shotsSoFar = 0;
+        public static bool _triggerEffectApplied = false;
+        public static bool _hasSetRecoilEffect = false;
 
         public void Awake()
         {
@@ -41,7 +43,7 @@ namespace Niko666
             UseVibrationFeedbackForRecoil = Config.Bind("General",
                                     "UseVibrationFeedbackForRecoil",
                                     false,
-                                    "Use vibration-based feedback for recoil effect. By default the mod use force-based feedback to emulate the recoil \"kick\" effect, but it doesn't work well with high rate of fire weapons when doing full-auto shooting. Turning this option on will make the trigger vibrates instead of kicking, which is more suitable for full-auto shooting but worse the feeling when single-shot. ");
+                                    "Use vibration-based feedback for recoil effect. By default the mod use force-based feedback to emulate the recoil \"kick\" effect, but it doesn't work well with extremely high RPM weapons when doing full-auto shooting. Turning this option on will make the trigger vibrates instead of kicking, which is more suitable for full-auto shooting but worse the feeling when single-shot. ");
             VibrationFrequency = Config.Bind("General",
                                     "VibrationFrequency",
                                     (byte)50,
@@ -95,6 +97,7 @@ namespace Niko666
                 GM.CurrentSceneSettings.ShotFiredEvent -= AdaptiveTrigger.ShotFired;
             // Reload the config
             AdaptiveTrigger.Instance.Config.Reload();
+            AdaptiveTrigger._triggerEffectApplied = false;
             //This is a workaround to disable trigger effect because TriggerEffectDisable() doesn't work with left controller.
             if (AdaptiveTrigger.ControllerToUse.Value == AdaptiveTrigger.ControllerType.Both)
                 IpcClient.Instance().TriggerEffectFeedback(EVRControllerType.Both, 9, 0);
@@ -110,6 +113,7 @@ namespace Niko666
         {
             if (__instance.CurrentInteractable == null)
             {
+                AdaptiveTrigger._triggerEffectApplied = false;
                 //This is a workaround to disable trigger effect because TriggerEffectDisable() doesn't work with left controller.
                 if (AdaptiveTrigger.ControllerToUse.Value == AdaptiveTrigger.ControllerType.Both)
                     IpcClient.Instance().TriggerEffectFeedback(__instance.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, 9, 0);
@@ -131,8 +135,6 @@ namespace Niko666
         [HarmonyPostfix]
         public static void GlobalRecoilEffect(FVRFireArm __instance)
         {
-            _ = (byte)(AdaptiveTrigger.DefaultStartPos.Value + 1);
-            _ = (byte)(AdaptiveTrigger.DefaultEndPos.Value + 1);
             if (__instance.m_hand != null)
             {
                 byte startPos;
@@ -140,24 +142,24 @@ namespace Niko666
                 switch (__instance)
                 {
                     case ClosedBoltWeapon w:
-                        startPos = (byte)(w.TriggerResetThreshold * 10 - 1);
-                        endPos = (byte)(w.TriggerFiringThreshold * 10 - 1);
+                        startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
+                        endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
                         break;
                     case OpenBoltReceiver w:
-                        startPos = (byte)(w.TriggerResetThreshold * 10 - 1);
-                        endPos = (byte)(w.TriggerFiringThreshold * 10 - 1);
+                        startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
+                        endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
                         break;
                     case Handgun w:
-                        startPos = (byte)(w.TriggerResetThreshold * 10 - 1);
-                        endPos = (byte)(w.TriggerBreakThreshold * 10 - 1);
+                        startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
+                        endPos = (byte)Mathf.Clamp((int)(w.TriggerBreakThreshold * 10 - 1), 0, 9);
                         break;
                     case TubeFedShotgun w:
-                        startPos = (byte)(w.TriggerResetThreshold * 10 - 1);
-                        endPos = (byte)(w.TriggerBreakThreshold * 10 - 1);
+                        startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
+                        endPos = (byte)Mathf.Clamp((int)(w.TriggerBreakThreshold * 10 - 1), 0, 9);
                         break;
                     case BoltActionRifle w:
-                        startPos = (byte)(w.TriggerResetThreshold * 10 - 1);
-                        endPos = (byte)(w.TriggerFiringThreshold * 10 - 1);
+                        startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
+                        endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
                         break;
                     case BreakActionWeapon:
                         startPos = 4;
@@ -168,74 +170,81 @@ namespace Niko666
                         endPos = 9;
                         break;
                     case SingleActionRevolver w:
-                        startPos = (byte)(w.TriggerThreshold * 10 - 2);
-                        endPos = (byte)(w.TriggerThreshold * 10 - 1);
+                        startPos = (byte)Mathf.Clamp((int)(w.TriggerThreshold * 10 - 2), 0, 9);
+                        endPos = (byte)Mathf.Clamp((int)(w.TriggerThreshold * 10 - 1), 0, 9);
                         break;
                     case RevolvingShotgun w:
-                        startPos = (byte)(w.TriggerResetThreshold * 10 - 1);
-                        endPos = (byte)(w.TriggerFiringThreshold * 10 - 1);
+                        startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
+                        endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
                         break;
                     case LAPD2019 w:
-                        startPos = (byte)(w.TriggerResetThreshold * 10 - 1);
-                        endPos = (byte)(w.TriggerFireThreshold * 10 - 1);
+                        startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
+                        endPos = (byte)Mathf.Clamp((int)(w.TriggerFireThreshold * 10 - 1), 0, 9);
                         break;
                     case BAP w:
-                        startPos = (byte)(w.TriggerResetThreshold * 10 - 1);
-                        endPos = (byte)(w.TriggerFiringThreshold * 10 - 1);
+                        startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
+                        endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
                         break;
                     case PotatoGun:
                         startPos = 4;
                         endPos = 7;
                         break;
                     case GrappleGun w:
-                        startPos = (byte)(w.TriggerResetThreshold * 10 - 1);
-                        endPos = (byte)(w.TriggerBreakThreshold * 10 - 1);
+                        startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
+                        endPos = (byte)Mathf.Clamp((int)(w.TriggerBreakThreshold * 10 - 1), 0, 9);
                         break;
                     case Airgun w:
-                        startPos = (byte)(w.TriggerResetThreshold * 10 - 1);
-                        endPos = (byte)(w.TriggerFiringThreshold * 10 - 1);
+                        startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
+                        endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
                         break;
                     case CarlGustaf w:
-                        startPos = (byte)(w.TriggerResetThreshold * 10 - 1);
-                        endPos = (byte)(w.TriggerFiringThreshold * 10 - 1);
+                        startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
+                        endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
                         break;
                     case RailTater w:
-                        startPos = (byte)(w.TriggerResetThreshold * 10 - 1);
-                        endPos = (byte)(w.TriggerFiringThreshold * 10 - 1);
+                        startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
+                        endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
                         break;
                     case FlameThrower w:
                         startPos = 3;
-                        endPos = (byte)(w.TriggerFiringThreshold * 10 - 1);
+                        endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
                         break;
                     case sblp w:
-                        startPos = (byte)(w.TriggerResetThreshold * 10 - 1);
-                        endPos = (byte)(w.TriggerFiringThreshold * 10 - 1);
+                        startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
+                        endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
                         break;
                     default:
-                        startPos = (byte)(AdaptiveTrigger.DefaultStartPos.Value + 1);
-                        endPos = (byte)(AdaptiveTrigger.DefaultEndPos.Value + 1);
+                        startPos = (byte)Mathf.Clamp(AdaptiveTrigger.DefaultStartPos.Value + 1, 0, 9);
+                        endPos = (byte)Mathf.Clamp(AdaptiveTrigger.DefaultEndPos.Value + 1, 0, 9);
                         break;
                 }
 
                 if (AdaptiveTrigger._shotsSoFar != 0)
                 {
-                    if (AdaptiveTrigger.UseVibrationFeedbackForRecoil.Value)
+                    if (!AdaptiveTrigger._hasSetRecoilEffect)
                     {
-                        if (AdaptiveTrigger.ControllerToUse.Value == AdaptiveTrigger.ControllerType.Both)
-                            IpcClient.Instance().TriggerEffectVibration(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, 0, AdaptiveTrigger.RecoilFeedbackStrength.Value, AdaptiveTrigger.VibrationFrequency.Value);
-                        else if (AdaptiveTrigger.ControllerToUse.Value == AdaptiveTrigger.ControllerType.Left && !__instance.m_hand.IsThisTheRightHand)
-                            IpcClient.Instance().TriggerEffectVibration(EVRControllerType.Left, 0, AdaptiveTrigger.RecoilFeedbackStrength.Value, AdaptiveTrigger.VibrationFrequency.Value);
-                        else if (AdaptiveTrigger.ControllerToUse.Value == AdaptiveTrigger.ControllerType.Right && __instance.m_hand.IsThisTheRightHand)
-                            IpcClient.Instance().TriggerEffectVibration(EVRControllerType.Right, 0, AdaptiveTrigger.RecoilFeedbackStrength.Value, AdaptiveTrigger.VibrationFrequency.Value);
+                        if (AdaptiveTrigger.UseVibrationFeedbackForRecoil.Value)
+                        {
+                            if (AdaptiveTrigger.ControllerToUse.Value == AdaptiveTrigger.ControllerType.Both)
+                                IpcClient.Instance().TriggerEffectVibration(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, 0, AdaptiveTrigger.RecoilFeedbackStrength.Value, AdaptiveTrigger.VibrationFrequency.Value);
+                            else if (AdaptiveTrigger.ControllerToUse.Value == AdaptiveTrigger.ControllerType.Left && !__instance.m_hand.IsThisTheRightHand)
+                                IpcClient.Instance().TriggerEffectVibration(EVRControllerType.Left, 0, AdaptiveTrigger.RecoilFeedbackStrength.Value, AdaptiveTrigger.VibrationFrequency.Value);
+                            else if (AdaptiveTrigger.ControllerToUse.Value == AdaptiveTrigger.ControllerType.Right && __instance.m_hand.IsThisTheRightHand)
+                                IpcClient.Instance().TriggerEffectVibration(EVRControllerType.Right, 0, AdaptiveTrigger.RecoilFeedbackStrength.Value, AdaptiveTrigger.VibrationFrequency.Value);
+                        }
+                        else
+                        {
+                            if (AdaptiveTrigger.ControllerToUse.Value == AdaptiveTrigger.ControllerType.Both)
+                                IpcClient.Instance().TriggerEffectFeedback(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, 0, AdaptiveTrigger.RecoilFeedbackStrength.Value);
+                            else if (AdaptiveTrigger.ControllerToUse.Value == AdaptiveTrigger.ControllerType.Left && !__instance.m_hand.IsThisTheRightHand)
+                                IpcClient.Instance().TriggerEffectFeedback(EVRControllerType.Left, 0, AdaptiveTrigger.RecoilFeedbackStrength.Value);
+                            else if (AdaptiveTrigger.ControllerToUse.Value == AdaptiveTrigger.ControllerType.Right && __instance.m_hand.IsThisTheRightHand)
+                                IpcClient.Instance().TriggerEffectFeedback(EVRControllerType.Right, 0, AdaptiveTrigger.RecoilFeedbackStrength.Value);
+                        }
+                        AdaptiveTrigger._hasSetRecoilEffect = true;
                     }
-                    else
-                        if (AdaptiveTrigger.ControllerToUse.Value == AdaptiveTrigger.ControllerType.Both)
-                            IpcClient.Instance().TriggerEffectFeedback(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, 0, AdaptiveTrigger.RecoilFeedbackStrength.Value);
-                        else if (AdaptiveTrigger.ControllerToUse.Value == AdaptiveTrigger.ControllerType.Left && !__instance.m_hand.IsThisTheRightHand)
-                            IpcClient.Instance().TriggerEffectFeedback(EVRControllerType.Left, 0, AdaptiveTrigger.RecoilFeedbackStrength.Value);
-                        else if (AdaptiveTrigger.ControllerToUse.Value == AdaptiveTrigger.ControllerType.Right && __instance.m_hand.IsThisTheRightHand)
-                            IpcClient.Instance().TriggerEffectFeedback(EVRControllerType.Right, 0, AdaptiveTrigger.RecoilFeedbackStrength.Value);
-                    if (__instance.m_hand.m_buzztime > 0.02f)
+                    if (__instance.m_hand.m_buzztime > 0.01f)
+                    //if (AdaptiveTrigger._shotsSoFar >= 1)
                     {
                         if (AdaptiveTrigger.ControllerToUse.Value == AdaptiveTrigger.ControllerType.Both)
                             IpcClient.Instance().TriggerEffectSlopeFeedback(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, (byte)(startPos - 1), (byte)(endPos - 1), 1, AdaptiveTrigger.ClickyEffectStrength.Value);
@@ -243,10 +252,11 @@ namespace Niko666
                             IpcClient.Instance().TriggerEffectSlopeFeedback(EVRControllerType.Left, (byte)(startPos - 1), (byte)(endPos - 1), 1, AdaptiveTrigger.ClickyEffectStrength.Value);
                         else if (AdaptiveTrigger.ControllerToUse.Value == AdaptiveTrigger.ControllerType.Right && __instance.m_hand.IsThisTheRightHand)
                             IpcClient.Instance().TriggerEffectSlopeFeedback(EVRControllerType.Right, (byte)(startPos - 1), (byte)(endPos - 1), 1, AdaptiveTrigger.ClickyEffectStrength.Value);
+                        AdaptiveTrigger._hasSetRecoilEffect = false;
                         AdaptiveTrigger._shotsSoFar = 0;
                     }
                 }
-                else
+                else if (!AdaptiveTrigger._triggerEffectApplied)
                 {
                     if (AdaptiveTrigger.ControllerToUse.Value == AdaptiveTrigger.ControllerType.Both)
                         IpcClient.Instance().TriggerEffectSlopeFeedback(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, (byte)(startPos - 1), (byte)(endPos - 1), 1, AdaptiveTrigger.ClickyEffectStrength.Value);
@@ -254,6 +264,7 @@ namespace Niko666
                         IpcClient.Instance().TriggerEffectSlopeFeedback(EVRControllerType.Left, (byte)(startPos - 1), (byte)(endPos - 1), 1, AdaptiveTrigger.ClickyEffectStrength.Value);
                     else if (AdaptiveTrigger.ControllerToUse.Value == AdaptiveTrigger.ControllerType.Right && __instance.m_hand.IsThisTheRightHand)
                         IpcClient.Instance().TriggerEffectSlopeFeedback(EVRControllerType.Right, (byte)(startPos - 1), (byte)(endPos - 1), 1, AdaptiveTrigger.ClickyEffectStrength.Value);
+                    AdaptiveTrigger._triggerEffectApplied = true;
                 }
             }
         }
