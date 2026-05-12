@@ -22,7 +22,8 @@ namespace Niko666
         public static ConfigEntry<bool> OverrideTriggerEffectPos;
         public static ConfigEntry<byte> OverrideStartPos;
         public static ConfigEntry<byte> OverrideEndPos;
-        public static int _shotsSoFar = 0;
+        public static int _leftShotsSoFar = 0;
+        public static int _rightShotsSoFar = 0;
         public static bool _LeftHandTriggerEffectApplied = false;
         public static bool _LeftHandRecoilEffectApplied = false;
         public static bool _LeftHandTriggerEffectCleared = false;
@@ -94,7 +95,13 @@ namespace Niko666
         }
         public static void ShotFired(FVRFireArm fireArm)
         {
-            if (fireArm.m_hand != null) _shotsSoFar++;
+            if (fireArm.m_hand != null)
+            {
+                if (fireArm.m_hand.IsThisTheRightHand)
+                    _rightShotsSoFar++;
+                else
+                    _leftShotsSoFar++;
+            }
         }
 
         public static void ApplyTriggerEffect(byte startPos, byte endPos, EVRControllerType Hand, float buzztime)
@@ -103,7 +110,7 @@ namespace Niko666
             {
                 case EVRControllerType.Left:
                     _LeftHandTriggerEffectCleared = false;
-                    if (_shotsSoFar != 0)
+                    if (_leftShotsSoFar != 0)
                     {
                         if (!_LeftHandRecoilEffectApplied)
                         {
@@ -120,24 +127,26 @@ namespace Niko666
                             _LeftHandRecoilEffectApplied = true;
                         }
                         if (buzztime > 0.01f)
-                        //if (AdaptiveTrigger._shotsSoFar >= 1)
                         {
                             if (ControllerToUse.Value == EVRControllerType.Left || ControllerToUse.Value == EVRControllerType.Both)
                                 IpcClient.Instance().TriggerEffectSlopeFeedback(EVRControllerType.Left, (byte)Mathf.Clamp(startPos - 1, 0, 9), (byte)Mathf.Clamp(endPos - 1, 0, 9), 1, ClickyEffectStrength.Value);
                             _LeftHandRecoilEffectApplied = false;
-                            _shotsSoFar = 0;
+                            _leftShotsSoFar = 0;
                         }
                     }
-                    else if (!_LeftHandTriggerEffectApplied)
+                    else
                     {
-                        if (ControllerToUse.Value == EVRControllerType.Left || ControllerToUse.Value == EVRControllerType.Both)
-                            IpcClient.Instance().TriggerEffectSlopeFeedback(EVRControllerType.Left, (byte)Mathf.Clamp(startPos - 1, 0, 9), (byte)Mathf.Clamp(endPos - 1, 0, 9), 1, ClickyEffectStrength.Value);
-                        _LeftHandTriggerEffectApplied = true;
+                        if (!_LeftHandTriggerEffectApplied)
+                        {
+                            if (ControllerToUse.Value == EVRControllerType.Left || ControllerToUse.Value == EVRControllerType.Both)
+                                IpcClient.Instance().TriggerEffectSlopeFeedback(EVRControllerType.Left, (byte)Mathf.Clamp(startPos - 1, 0, 9), (byte)Mathf.Clamp(endPos - 1, 0, 9), 1, ClickyEffectStrength.Value);
+                            _LeftHandTriggerEffectApplied = true;
+                        }
                     }
                     break;
                 case EVRControllerType.Right:
                     _RightHandTriggerEffectCleared = false;
-                    if (_shotsSoFar != 0)
+                    if (_rightShotsSoFar != 0)
                     {
                         if (!_RightHandRecoilEffectApplied)
                         {
@@ -154,26 +163,28 @@ namespace Niko666
                             _RightHandRecoilEffectApplied = true;
                         }
                         if (buzztime > 0.01f)
-                        //if (AdaptiveTrigger._shotsSoFar >= 1)
                         {
                             if (ControllerToUse.Value == EVRControllerType.Right || ControllerToUse.Value == EVRControllerType.Both)
                                 IpcClient.Instance().TriggerEffectSlopeFeedback(EVRControllerType.Right, (byte)Mathf.Clamp(startPos - 1, 0, 9), (byte)Mathf.Clamp(endPos - 1, 0, 9), 1, ClickyEffectStrength.Value);
                             _RightHandRecoilEffectApplied = false;
-                            _shotsSoFar = 0;
+                            _rightShotsSoFar = 0;
                         }
                     }
-                    else if (!_RightHandTriggerEffectApplied)
+                    else
                     {
-                        if (ControllerToUse.Value == EVRControllerType.Right || ControllerToUse.Value == EVRControllerType.Both)
-                            IpcClient.Instance().TriggerEffectSlopeFeedback(EVRControllerType.Right, (byte)Mathf.Clamp(startPos - 1, 0, 9), (byte)Mathf.Clamp(endPos - 1, 0, 9), 1, ClickyEffectStrength.Value);
-                        _RightHandTriggerEffectApplied = true;
+                        if (!_RightHandTriggerEffectApplied)
+                        {
+                            if (ControllerToUse.Value == EVRControllerType.Right || ControllerToUse.Value == EVRControllerType.Both)
+                                IpcClient.Instance().TriggerEffectSlopeFeedback(EVRControllerType.Right, (byte)Mathf.Clamp(startPos - 1, 0, 9), (byte)Mathf.Clamp(endPos - 1, 0, 9), 1, ClickyEffectStrength.Value);
+                            _RightHandTriggerEffectApplied = true;
+                        }
                     }
                     break;
                 case EVRControllerType.Both:
                     break;
             }
-
         }
+
         public static void ClearTriggerEffect(EVRControllerType Hand)
         {
             switch (Hand)
@@ -183,16 +194,16 @@ namespace Niko666
                     //This is a workaround to disable trigger effect because TriggerEffectDisable() doesn't work with left controller.
                     IpcClient.Instance().TriggerEffectFeedback(EVRControllerType.Left, 9, 0);
                     _LeftHandTriggerEffectApplied = false;
-                    _LeftHandTriggerEffectApplied = false;
-                    _shotsSoFar = 0;
+                    _LeftHandRecoilEffectApplied = false;
+                    _leftShotsSoFar = 0;
                     _LeftHandTriggerEffectCleared = true;
                     break;
                 case EVRControllerType.Right:
                     if (_RightHandTriggerEffectCleared) return;
                     IpcClient.Instance().TriggerEffectDisable(EVRControllerType.Right);
                     _RightHandTriggerEffectApplied = false;
-                    _RightHandTriggerEffectApplied = false;
-                    _shotsSoFar = 0;
+                    _RightHandRecoilEffectApplied = false;
+                    _rightShotsSoFar = 0;
                     _RightHandTriggerEffectCleared = true;
                     break;
                 case EVRControllerType.Both:
@@ -200,11 +211,12 @@ namespace Niko666
                     //This is a workaround to disable trigger effect because TriggerEffectDisable() doesn't work with left controller.
                     IpcClient.Instance().TriggerEffectFeedback(EVRControllerType.Both, 9, 0);
                     _LeftHandTriggerEffectApplied = false;
-                    _LeftHandTriggerEffectApplied = false;
-                    _shotsSoFar = 0;
+                    _LeftHandRecoilEffectApplied = false;
+                    _leftShotsSoFar = 0;
                     _LeftHandTriggerEffectCleared = true;
                     _RightHandTriggerEffectApplied = false;
-                    _RightHandTriggerEffectApplied = false;
+                    _RightHandRecoilEffectApplied = false;
+                    _rightShotsSoFar = 0;
                     _RightHandTriggerEffectCleared = true;
                     break;
             }

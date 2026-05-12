@@ -2,7 +2,7 @@
 
 For those who use PSVR2 but didn't know, you can use [PSVR2 Toolkit](https://github.com/BnuuySolutions/PSVR2Toolkit) to enable eye tracking and adaptive triggers etc on PC. There are already a couple of games (and mods) utilize those features so I think we should have this too.
 
-Also it is recommended to use the next-custom-sync branch of PSVR2 Toolkit, which enables PCM haptics by default which is way better than the default "dumb" haptics. It also has custom tracking led sync which in theory can extend battery life. You can download the (currently) newest build from <https://github.com/BnuuySolutions/PSVR2Toolkit/actions/runs/21767048867> (iirc you'll need to log in to GitHub to download it).
+Also it is recommended to use the next-custom-sync branch of PSVR2 Toolkit, which enables PCM haptics by default which is way better than the default "dumb" haptics. It also has custom tracking led sync which in theory can extend battery life. You can download the (currently) newest build from <https://github.com/BnuuySolutions/PSVR2Toolkit/actions/runs/25595697654> (iirc you'll need to log in to GitHub to download it. If expired, go to the Actions tab and find the newest one with custom-controller-sync tag yourself).
 
 ## Features
 
