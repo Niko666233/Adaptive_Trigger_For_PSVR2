@@ -6,17 +6,18 @@ Also it is recommended to use the next-custom-sync branch of PSVR2 Toolkit, whic
 
 ## Features
 
-- Clicky trigger effect
+- Clicky trigger effect with Dual Stage trigger simulation
 - Force feedback when firing, simulating recoil "kicks" (also vibration-based feedback as an alternative)
+- Disable the effects when the gun is empty / when the hammer is not cocked so you'll know when you're out of ammo (buggy, disabled by default)
 - Configurable (somewhat), reload the scene to reload the config
 
 ## Known Issues and Limitations
 
 - You need to install [PSVR2 Toolkit](https://github.com/BnuuySolutions/PSVR2Toolkit) for this mod to function!
-- My [![State-of-the-art Shitcode](https://img.shields.io/static/v1?label=State-of-the-art&message=Shitcode&color=7B5804)](https://github.com/trekhleb/state-of-the-art-shitcode) will make controllers' batteries drains considerably faster
+- My [![State-of-the-art Shitcode](https://img.shields.io/static/v1?label=State-of-the-art&message=Shitcode&color=7B5804)](https://github.com/trekhleb/state-of-the-art-shitcode) will make controllers' batteries drain considerably faster
 - No per-weapon (type) configurations
-- No proper dual stage trigger simulation currently
 - Currently PSVR2 Toolkit has a bug that causes the left controller trigger effect to "stuck" and can't be removed. I've implemented a workaround but it's probably not perfect. Alternatively, you can disable the left controller trigger effect as a whole in the config file.
+- I've never touched real firearms in my life so I don't know how realistic the trigger simulation is. If you have any suggestions, feel free to tell me.
 
 ## I Asked Myself These Questions
 

@@ -6,6 +6,7 @@ using HarmonyLib;
 using PSVR2Toolkit.CAPI;
 using UnityEngine;
 using System.Threading;
+using Mono.Cecil;
 
 namespace Niko666
 {
@@ -15,6 +16,8 @@ namespace Niko666
     {
         public static AdaptiveTrigger Instance { get; private set; }
         public static ConfigEntry<EVRControllerType> ControllerToUse;
+        public static ConfigEntry<bool> AllowDualStageTriggerEffect;
+        public static ConfigEntry<bool> DisableEffectWhenEmpty;
         public static ConfigEntry<byte> ClickyEffectStrength;
         public static ConfigEntry<byte> RecoilFeedbackStrength;
         public static ConfigEntry<bool> UseVibrationFeedbackForRecoil;
@@ -38,10 +41,18 @@ namespace Niko666
                                     "ControllerToUse",
                                     EVRControllerType.Both,
                                     "Enable Adaptive Trigger effect on selected controllers only. (Both, Left, Right)");
+            AllowDualStageTriggerEffect = Config.Bind("General",
+                                    "AllowDualStageTriggerEffect",
+                                    true,
+                                    "Enable dual stage trigger effect. This will attempt to add a little bit of resistance before the each \"stage\" of the trigger. (I have no idea how a real Dual Stage trigger feels so sorry if it doesn't feel right)");
+            DisableEffectWhenEmpty = Config.Bind("General",
+                                    "DisableEffectWhenEmpty",
+                                    false,
+                                    "Disable trigger effect when the gun is empty or the hammer is not cocked.");
             ClickyEffectStrength = Config.Bind("General",
                                     "ClickyEffectStrength",
                                     (byte)4,
-                                    "Effect strength of clicky trigger effect. (1-8)");
+                                    "Effect strength of clicky trigger effect. Going too high might cause weak recoil effect. (1-8)");
             RecoilFeedbackStrength = Config.Bind("General",
                                     "RecoilFeedbackStrength",
                                     (byte)8,
@@ -57,13 +68,13 @@ namespace Niko666
             OverrideTriggerEffectPos = Config.Bind("General",
                                     "OverrideTriggerEffectPos",
                                     false,
-                                    "Override trigger effect position with user set values instead of reading from firearm's trigger thresholds. Not recommend but could be useful if you want to.");
+                                    "Override trigger effect position with user set values instead of reading from firearm's trigger thresholds. Not recommend but could be useful if you want to. Also this will disable dual stage trigger effect and empty effect.");
             OverrideStartPos = Config.Bind("General",
-                                    "DefaultStartPos",
+                                    "OverrideStartPos",
                                     (byte)2,
                                     "Override start position of the trigger effect. (0-9)");
             OverrideEndPos = Config.Bind("General",
-                                    "DefaultEndPos",
+                                    "OverrideStartPos",
                                     (byte)7,
                                     "Override end position of the trigger effect. (0-9)");
 
@@ -75,7 +86,7 @@ namespace Niko666
                 {
                     Logger.LogMessage($"PSVR2 Toolkit IPC Connected.");
                     Harmony.CreateAndPatchAll(typeof(AdaptiveTriggerPatch), null);
-                    Logger.LogMessage($"Fuck this world! Sent from {Id} {Version}");
+                    Logger.LogMessage($"Fuk U Sony! Sent from {Id} {Version}");
                 }
                 else
                 {
@@ -274,8 +285,9 @@ namespace Niko666
                     byte endPos;
                     if (AdaptiveTrigger.OverrideTriggerEffectPos.Value)
                     {
-                        startPos = (byte)Mathf.Clamp(AdaptiveTrigger.OverrideStartPos.Value + 1, 0, 10);
-                        endPos = (byte)Mathf.Clamp(AdaptiveTrigger.OverrideEndPos.Value + 1, 0, 10);
+                        startPos = (byte)Mathf.Clamp(AdaptiveTrigger.OverrideStartPos.Value, 0, 9);
+                        endPos = (byte)Mathf.Clamp(AdaptiveTrigger.OverrideEndPos.Value, 0, 9);
+                        AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
                     }
                     else
                         switch (__instance)
@@ -283,84 +295,189 @@ namespace Niko666
                             case ClosedBoltWeapon w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
-                                break;
+                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && ((w.Magazine == null && !w.Chamber.IsFull && !w.IsHammerCocked) || (w.Magazine != null && !w.Magazine.HasARound() && !w.Chamber.IsFull && !w.IsHammerCocked)))
+                                {
+                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                                    break;
+                                }
+                                else
+                                {
+                                    if (w.UsesDualStageFullAuto && AdaptiveTrigger.AllowDualStageTriggerEffect.Value)
+                                    {
+                                        if (w.m_triggerFloat < w.TriggerFiringThreshold)
+                                        {
+                                            startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
+                                            endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
+                                            AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                        }
+                                        else
+                                        {
+                                            startPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
+                                            endPos = (byte)Mathf.Clamp((int)(w.TriggerDualStageThreshold * 10 - 1), 0, 9);
+                                            AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                        }
+                                    }
+                                    else
+                                        AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                    break;
+                                }
                             case OpenBoltReceiver w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
-                                break;
+                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && ((w.Magazine == null && !w.Chamber.IsFull && !w.IsHammerCocked) || (w.Magazine != null && !w.Magazine.HasARound() && !w.Chamber.IsFull && !w.IsHammerCocked)))
+                                {
+                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                                    break;
+                                }
+                                else
+                                {
+                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                    break;
+                                }
                             case Handgun w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerBreakThreshold * 10 - 1), 0, 9);
-                                break;
+                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && w.TriggerType == Handgun.TriggerStyle.SA && ((w.Magazine == null && !w.Chamber.IsFull && !w.m_isHammerCocked) || (w.Magazine != null && !w.Magazine.HasARound() && !w.Chamber.IsFull && !w.m_isHammerCocked)))
+                                {
+                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                                    break;
+                                }
+                                else
+                                {
+                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                    break;
+                                }
                             case TubeFedShotgun w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerBreakThreshold * 10 - 1), 0, 9);
-                                break;
+                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && ((w.Magazine == null && !w.Chamber.IsFull && !w.IsHammerCocked) || (w.Magazine != null && !w.Magazine.HasARound() && !w.Chamber.IsFull && !w.IsHammerCocked)))
+                                {
+                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                                    break;
+                                }
+                                else
+                                {
+                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                    break;
+                                }
                             case BoltActionRifle w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
-                                break;
-                            case BreakActionWeapon:
+                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && ((w.Magazine == null && !w.Chamber.IsFull && !w.IsHammerCocked) || (w.Magazine != null && !w.Magazine.HasARound() && !w.Chamber.IsFull && !w.IsHammerCocked)))
+                                {
+                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                                    break;
+                                }
+                                else
+                                {
+                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                    break;
+                                }
+                            case BreakActionWeapon w:
                                 startPos = 4;
                                 endPos = 7;
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                             case Revolver:
                                 startPos = 2;
                                 endPos = 9;
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                             case SingleActionRevolver w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerThreshold * 10 - 2), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerThreshold * 10 - 1), 0, 9);
-                                break;
+                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && !w.m_isHammerCocked)
+                                {
+                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                                    break;
+                                }
+                                else
+                                {
+                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                    break;
+                                }
                             case RevolvingShotgun w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                             case LAPD2019 w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFireThreshold * 10 - 1), 0, 9);
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                             case BAP w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
-                                break;
+                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && ((w.Magazine == null && !w.Chamber.IsFull && !w.m_isHammerCocked) || (w.Magazine != null && !w.Magazine.HasARound() && !w.Chamber.IsFull && !w.m_isHammerCocked)))
+                                {
+                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                                    break;
+                                }
+                                else
+                                {
+                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                    break;
+                                }
                             case PotatoGun:
                                 startPos = 4;
                                 endPos = 7;
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                             case GrappleGun w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerBreakThreshold * 10 - 1), 0, 9);
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                             case Airgun w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
-                                break;
+                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && !w.m_isHammerCocked)
+                                {
+                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                                    break;
+                                }
+                                else
+                                {
+                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                    break;
+                                }
                             case CarlGustaf w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                             case RailTater w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
-                                break;
+                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && !w.m_isHammerCocked)
+                                {
+                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                                    break;
+                                }
+                                else
+                                {
+                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                    break;
+                                }
                             case FlameThrower w:
                                 startPos = 3;
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                             case sblp w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                             default:
                                 startPos = 2;
                                 endPos = 7;
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                         }
-                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
                 }
             }
-
         }
 
         [HarmonyPatch(typeof(AttachableFirearmPhysicalObject), "UpdateInteraction")]
