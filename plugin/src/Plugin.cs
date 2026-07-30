@@ -3,10 +3,12 @@ using BepInEx.Configuration;
 using BepInEx.Logging;
 using FistVR;
 using HarmonyLib;
-using PSVR2Toolkit.CAPI;
 using UnityEngine;
-using System.Threading;
-using Mono.Cecil;
+using PSVR2Toolkit;
+using System.Collections;
+using System.Runtime.InteropServices;
+using System.Reflection;
+
 
 namespace Niko666
 {
@@ -14,8 +16,11 @@ namespace Niko666
     [BepInProcess("h3vr.exe")]
     public partial class AdaptiveTrigger : BaseUnityPlugin
     {
+        public enum HeadsetVibrationType { Disabled, OnHit, OnRecoil, Both }
         public static AdaptiveTrigger Instance { get; private set; }
-        public static ConfigEntry<EVRControllerType> ControllerToUse;
+        public static ConfigEntry<VRControllerType> ControllerToUse;
+        public static ConfigEntry<HeadsetVibrationType> HeadsetVibration;
+        public static ConfigEntry<byte> HeadsetVibrationFrequency;
         public static ConfigEntry<bool> AllowDualStageTriggerEffect;
         public static ConfigEntry<bool> DisableEffectWhenEmpty;
         public static ConfigEntry<byte> ClickyEffectStrength;
@@ -36,11 +41,24 @@ namespace Niko666
 
         public void Awake()
         {
+            // 获取当前插件 DLL 所在的目录路径
+            string pluginDirectory = System.IO.Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            // 将插件目录添加到进程的 DLL 搜索路径中，使 P/Invoke 能找到同目录下的 CAPI Loader
+            SetDllDirectory(pluginDirectory);
+            //File.Copy(pluginLoaction + "/psvr2_toolkit_capi_loader.dll", Paths.GameRootPath + "/psvr2_toolkit_capi_loader.dll", true);
             Instance = this;
             ControllerToUse = Config.Bind("General",
                                     "ControllerToUse",
-                                    EVRControllerType.Both,
+                                    VRControllerType.Both,
                                     "Enable Adaptive Trigger effect on selected controllers only. (Both, Left, Right)");
+            HeadsetVibration = Config.Bind("General",
+                                    "HeadsetVibration",
+                                    HeadsetVibrationType.Both,
+                                    "Enable headset vibration effect. (Disabled, OnHit, OnRecoil, Both)");
+            HeadsetVibrationFrequency = Config.Bind("General",
+                                    "HeadsetVibrationFrequency",
+                                    (byte)15,
+                                    "Headset vibration frequency. (1-25)");
             AllowDualStageTriggerEffect = Config.Bind("General",
                                     "AllowDualStageTriggerEffect",
                                     true,
@@ -79,30 +97,37 @@ namespace Niko666
                                     "Override end position of the trigger effect. (0-9)");
 
             Logger = base.Logger;
-            if (!IpcClient.Instance().IsRunning)
+            try
             {
-                bool success = IpcClient.Instance().Start();
-                if (success)
-                {
-                    Logger.LogMessage($"PSVR2 Toolkit IPC Connected.");
-                    Harmony.CreateAndPatchAll(typeof(AdaptiveTriggerPatch), null);
-                    Logger.LogMessage($"Fuk U Sony! Sent from {Id} {Version}");
-                }
-                else
-                {
-                    Logger.LogMessage($"Failed to connect PSVR2 Toolkit IPC. Did you install PSVR2 Toolkit properly?");
-                }
+                PSVR2ToolkitCAPI.Init();
+                Logger.LogMessage($"PSVR2 Toolkit CAPI Initialized.");
+                Harmony.CreateAndPatchAll(typeof(AdaptiveTriggerPatch), null);
+                Logger.LogMessage($"Fuk U Sony! Sent from {Id} {Version}");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Failed to initialize PSVR2 Toolkit CAPI: {ex.Message}\n You need to install or update PSVR2 Toolkit!");
             }
         }
         public void OnDestroy()
         {
-            IpcClient.Instance().TriggerEffectFeedback(EVRControllerType.Both, 9, 0);
-            Thread.Sleep(20);
-            IpcClient.Instance().TriggerEffectDisable(EVRControllerType.Both);
-            Thread.Sleep(20);
-            IpcClient.Instance().Stop();
-            Thread.Sleep(20);
-            Logger.LogMessage($"PSVR2 Toolkit IPC disconnected. It is now safe to turn off your computer.");
+            if (_headsetVibrationCoroutine != null)
+            {
+                StopCoroutine(_headsetVibrationCoroutine);
+            }
+            PSVR2ToolkitCAPI.SetHmdRumble(0);
+            SetTriggerEffectOff(VRControllerType.Both);
+            PSVR2ToolkitCAPI.Deinit();
+            Logger.LogMessage($"PSVR2 Toolkit CAPI Deinitialized. It is now safe to turn off your computer.");
+        }
+
+        private static void SetTriggerEffectOff(VRControllerType controller)
+        {
+            var command = new ScePadTriggerEffectCommand
+            {
+                mode = ScePadTriggerEffectMode.SCE_PAD_TRIGGER_EFFECT_MODE_OFF
+            };
+            PSVR2ToolkitCAPI.SetTriggerEffect(controller, ref command);
         }
         public static void ShotFired(FVRFireArm fireArm)
         {
@@ -115,124 +140,137 @@ namespace Niko666
             }
         }
 
-        public static void ApplyTriggerEffect(byte startPos, byte endPos, EVRControllerType Hand, float buzztime)
+        public static void ApplyTriggerEffect(byte startPos, byte endPos, VRControllerType Hand, float buzztime)
+        {
+            bool shouldApply = ControllerToUse.Value == Hand || ControllerToUse.Value == VRControllerType.Both;
+            if (Hand != VRControllerType.Left && Hand != VRControllerType.Right) return;
+
+            bool isLeft = Hand == VRControllerType.Left;
+            ref bool effectCleared = ref isLeft ? ref _LeftHandTriggerEffectCleared : ref _RightHandTriggerEffectCleared;
+            ref bool effectApplied = ref isLeft ? ref _LeftHandTriggerEffectApplied : ref _RightHandTriggerEffectApplied;
+            ref bool recoilApplied = ref isLeft ? ref _LeftHandRecoilEffectApplied : ref _RightHandRecoilEffectApplied;
+            ref int shotsSoFar = ref isLeft ? ref _leftShotsSoFar : ref _rightShotsSoFar;
+
+            effectCleared = false;
+            if (shotsSoFar != 0)
+            {
+                if (!recoilApplied && shouldApply)
+                {
+                    if (UseVibrationFeedbackForRecoil.Value)
+                    {
+                        var cmd = new ScePadTriggerEffectCommand
+                        {
+                            mode = ScePadTriggerEffectMode.SCE_PAD_TRIGGER_EFFECT_MODE_VIBRATION,
+                            commandData = { vibrationPosition = 0, vibrationAmplitude = RecoilFeedbackStrength.Value, vibrationFrequency = VibrationFrequency.Value }
+                        };
+                        PSVR2ToolkitCAPI.SetTriggerEffect(Hand, ref cmd);
+                    }
+                    else
+                    {
+                        var cmd = new ScePadTriggerEffectCommand
+                        {
+                            mode = ScePadTriggerEffectMode.SCE_PAD_TRIGGER_EFFECT_MODE_FEEDBACK,
+                            commandData = { feedbackPosition = 0, feedbackStrength = RecoilFeedbackStrength.Value }
+                        };
+                        PSVR2ToolkitCAPI.SetTriggerEffect(Hand, ref cmd);
+                    }
+                    recoilApplied = true;
+                }
+                if (buzztime > 0.01f && shouldApply)
+                {
+                    var cmd = new ScePadTriggerEffectCommand
+                    {
+                        mode = ScePadTriggerEffectMode.SCE_PAD_TRIGGER_EFFECT_MODE_SLOPE_FEEDBACK,
+                        commandData = { slopeStartPosition = (byte)Mathf.Clamp(startPos - 1, 0, 9), slopeEndPosition = (byte)Mathf.Clamp(endPos - 1, 0, 9), slopeStartStrength = 1, slopeEndStrength = ClickyEffectStrength.Value }
+                    };
+                    PSVR2ToolkitCAPI.SetTriggerEffect(Hand, ref cmd);
+                    recoilApplied = false;
+                    shotsSoFar = 0;
+                }
+            }
+            else
+            {
+                if (!effectApplied && shouldApply)
+                {
+                    var cmd = new ScePadTriggerEffectCommand
+                    {
+                        mode = ScePadTriggerEffectMode.SCE_PAD_TRIGGER_EFFECT_MODE_SLOPE_FEEDBACK,
+                        commandData = { slopeStartPosition = (byte)Mathf.Clamp(startPos - 1, 0, 9), slopeEndPosition = (byte)Mathf.Clamp(endPos - 1, 0, 9), slopeStartStrength = 1, slopeEndStrength = ClickyEffectStrength.Value }
+                    };
+                    PSVR2ToolkitCAPI.SetTriggerEffect(Hand, ref cmd);
+                    effectApplied = true;
+                }
+            }
+        }
+
+        public static void ClearTriggerEffect(VRControllerType Hand)
         {
             switch (Hand)
             {
-                case EVRControllerType.Left:
-                    _LeftHandTriggerEffectCleared = false;
-                    if (_leftShotsSoFar != 0)
-                    {
-                        if (!_LeftHandRecoilEffectApplied)
-                        {
-                            if (UseVibrationFeedbackForRecoil.Value)
-                            {
-                                if (ControllerToUse.Value == EVRControllerType.Left || ControllerToUse.Value == EVRControllerType.Both)
-                                    IpcClient.Instance().TriggerEffectVibration(EVRControllerType.Left, 0, RecoilFeedbackStrength.Value, VibrationFrequency.Value);
-                            }
-                            else
-                            {
-                                if (ControllerToUse.Value == EVRControllerType.Left || ControllerToUse.Value == EVRControllerType.Both)
-                                    IpcClient.Instance().TriggerEffectFeedback(EVRControllerType.Left, 0, RecoilFeedbackStrength.Value);
-                            }
-                            _LeftHandRecoilEffectApplied = true;
-                        }
-                        if (buzztime > 0.01f)
-                        {
-                            if (ControllerToUse.Value == EVRControllerType.Left || ControllerToUse.Value == EVRControllerType.Both)
-                                IpcClient.Instance().TriggerEffectSlopeFeedback(EVRControllerType.Left, (byte)Mathf.Clamp(startPos - 1, 0, 9), (byte)Mathf.Clamp(endPos - 1, 0, 9), 1, ClickyEffectStrength.Value);
-                            _LeftHandRecoilEffectApplied = false;
-                            _leftShotsSoFar = 0;
-                        }
-                    }
-                    else
-                    {
-                        if (!_LeftHandTriggerEffectApplied)
-                        {
-                            if (ControllerToUse.Value == EVRControllerType.Left || ControllerToUse.Value == EVRControllerType.Both)
-                                IpcClient.Instance().TriggerEffectSlopeFeedback(EVRControllerType.Left, (byte)Mathf.Clamp(startPos - 1, 0, 9), (byte)Mathf.Clamp(endPos - 1, 0, 9), 1, ClickyEffectStrength.Value);
-                            _LeftHandTriggerEffectApplied = true;
-                        }
-                    }
+                case VRControllerType.Left:
+                    if (_LeftHandTriggerEffectCleared) return;
+                    SetTriggerEffectOff(VRControllerType.Left);
+                    _LeftHandTriggerEffectApplied = false;
+                    _LeftHandRecoilEffectApplied = false;
+                    _leftShotsSoFar = 0;
+                    _LeftHandTriggerEffectCleared = true;
                     break;
-                case EVRControllerType.Right:
-                    _RightHandTriggerEffectCleared = false;
-                    if (_rightShotsSoFar != 0)
-                    {
-                        if (!_RightHandRecoilEffectApplied)
-                        {
-                            if (UseVibrationFeedbackForRecoil.Value)
-                            {
-                                if (ControllerToUse.Value == EVRControllerType.Right || ControllerToUse.Value == EVRControllerType.Both)
-                                    IpcClient.Instance().TriggerEffectVibration(EVRControllerType.Right, 0, RecoilFeedbackStrength.Value, VibrationFrequency.Value);
-                            }
-                            else
-                            {
-                                if (ControllerToUse.Value == EVRControllerType.Right || ControllerToUse.Value == EVRControllerType.Both)
-                                    IpcClient.Instance().TriggerEffectFeedback(EVRControllerType.Right, 0, RecoilFeedbackStrength.Value);
-                            }
-                            _RightHandRecoilEffectApplied = true;
-                        }
-                        if (buzztime > 0.01f)
-                        {
-                            if (ControllerToUse.Value == EVRControllerType.Right || ControllerToUse.Value == EVRControllerType.Both)
-                                IpcClient.Instance().TriggerEffectSlopeFeedback(EVRControllerType.Right, (byte)Mathf.Clamp(startPos - 1, 0, 9), (byte)Mathf.Clamp(endPos - 1, 0, 9), 1, ClickyEffectStrength.Value);
-                            _RightHandRecoilEffectApplied = false;
-                            _rightShotsSoFar = 0;
-                        }
-                    }
-                    else
-                    {
-                        if (!_RightHandTriggerEffectApplied)
-                        {
-                            if (ControllerToUse.Value == EVRControllerType.Right || ControllerToUse.Value == EVRControllerType.Both)
-                                IpcClient.Instance().TriggerEffectSlopeFeedback(EVRControllerType.Right, (byte)Mathf.Clamp(startPos - 1, 0, 9), (byte)Mathf.Clamp(endPos - 1, 0, 9), 1, ClickyEffectStrength.Value);
-                            _RightHandTriggerEffectApplied = true;
-                        }
-                    }
+                case VRControllerType.Right:
+                    if (_RightHandTriggerEffectCleared) return;
+                    SetTriggerEffectOff(VRControllerType.Right);
+                    _RightHandTriggerEffectApplied = false;
+                    _RightHandRecoilEffectApplied = false;
+                    _rightShotsSoFar = 0;
+                    _RightHandTriggerEffectCleared = true;
                     break;
-                case EVRControllerType.Both:
+                case VRControllerType.Both:
+                    if (_LeftHandTriggerEffectCleared && _RightHandTriggerEffectCleared) return;
+                    SetTriggerEffectOff(VRControllerType.Both);
+                    _LeftHandTriggerEffectApplied = false;
+                    _LeftHandRecoilEffectApplied = false;
+                    _leftShotsSoFar = 0;
+                    _LeftHandTriggerEffectCleared = true;
+                    _RightHandTriggerEffectApplied = false;
+                    _RightHandRecoilEffectApplied = false;
+                    _rightShotsSoFar = 0;
+                    _RightHandTriggerEffectCleared = true;
                     break;
             }
         }
 
-        public static void ClearTriggerEffect(EVRControllerType Hand)
+        private static Coroutine _headsetVibrationCoroutine;
+        public static void ApplyHeadsetVibration(float duration, byte freq)
         {
-            switch (Hand)
+            if (_headsetVibrationCoroutine != null)
             {
-                case EVRControllerType.Left:
-                    if (_LeftHandTriggerEffectCleared) return;
-                    //This is a workaround to disable trigger effect because TriggerEffectDisable() doesn't work with left controller.
-                    IpcClient.Instance().TriggerEffectFeedback(EVRControllerType.Left, 9, 0);
-                    _LeftHandTriggerEffectApplied = false;
-                    _LeftHandRecoilEffectApplied = false;
-                    _leftShotsSoFar = 0;
-                    _LeftHandTriggerEffectCleared = true;
-                    break;
-                case EVRControllerType.Right:
-                    if (_RightHandTriggerEffectCleared) return;
-                    IpcClient.Instance().TriggerEffectDisable(EVRControllerType.Right);
-                    _RightHandTriggerEffectApplied = false;
-                    _RightHandRecoilEffectApplied = false;
-                    _rightShotsSoFar = 0;
-                    _RightHandTriggerEffectCleared = true;
-                    break;
-                case EVRControllerType.Both:
-                    if (_LeftHandTriggerEffectCleared && _RightHandTriggerEffectCleared) return;
-                    //This is a workaround to disable trigger effect because TriggerEffectDisable() doesn't work with left controller.
-                    IpcClient.Instance().TriggerEffectFeedback(EVRControllerType.Both, 9, 0);
-                    _LeftHandTriggerEffectApplied = false;
-                    _LeftHandRecoilEffectApplied = false;
-                    _leftShotsSoFar = 0;
-                    _LeftHandTriggerEffectCleared = true;
-                    _RightHandTriggerEffectApplied = false;
-                    _RightHandRecoilEffectApplied = false;
-                    _rightShotsSoFar = 0;
-                    _RightHandTriggerEffectCleared = true;
-                    break;
+                // 停止当前正在运行的震动协程，防止叠加
+                Instance.StopCoroutine(_headsetVibrationCoroutine);
             }
+            _headsetVibrationCoroutine = Instance.StartCoroutine(VibrationFadeRoutine(duration, freq));
+        }
+        private static IEnumerator VibrationFadeRoutine(float duration, byte startFreq)
+        {
+            byte clampedStartFreq = (byte)Mathf.Clamp(startFreq, 0, 25);
+            float elapsedTime = 0f;
+
+            while (elapsedTime < duration)
+            {
+                elapsedTime += Time.deltaTime;
+                // 随时间推移，从初始频率平滑插值到 0
+                float currentFreq = Mathf.Lerp(clampedStartFreq, 0, elapsedTime / duration);
+                PSVR2ToolkitCAPI.SetHmdRumble((byte)currentFreq);
+                yield return null; // 等待下一帧
+            }
+
+            // 确保震动完全停止
+            PSVR2ToolkitCAPI.SetHmdRumble(0);
+            _headsetVibrationCoroutine = null;
         }
         internal new static ManualLogSource Logger { get; private set; }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetDllDirectory(string lpPathName);
     }
     class AdaptiveTriggerPatch : MonoBehaviour
     {
@@ -246,7 +284,7 @@ namespace Niko666
             AdaptiveTrigger.Instance.Config.Reload();
             AdaptiveTrigger._LeftHandTriggerEffectCleared = false;
             AdaptiveTrigger._RightHandTriggerEffectCleared = false;
-            AdaptiveTrigger.ClearTriggerEffect(EVRControllerType.Both);
+            AdaptiveTrigger.ClearTriggerEffect(VRControllerType.Both);
             return true;
         }
 
@@ -257,16 +295,41 @@ namespace Niko666
             GM.CurrentSceneSettings.ShotFiredEvent += AdaptiveTrigger.ShotFired;
         }
 
+        [HarmonyPatch(typeof(FVRPlayerBody), "HitEffect")]
+        [HarmonyPrefix]
+        public static bool HitEffectPatch()
+        {
+            if (AdaptiveTrigger.HeadsetVibration.Value == AdaptiveTrigger.HeadsetVibrationType.OnHit || AdaptiveTrigger.HeadsetVibration.Value == AdaptiveTrigger.HeadsetVibrationType.Both)
+            { AdaptiveTrigger.ApplyHeadsetVibration(3f, AdaptiveTrigger.HeadsetVibrationFrequency.Value); }
+            return true;
+        }
+
         [HarmonyPatch(typeof(FVRViveHand), "Update")]
         [HarmonyPostfix]
-        public static void ClearEffectOnDrop(FVRViveHand __instance)
+        public static void ClearEffectOnDropButAlsoDoHeadsetVibration(FVRViveHand __instance)
         {
             if (__instance.CurrentInteractable == null)
             {
-                AdaptiveTrigger.ClearTriggerEffect(__instance.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                AdaptiveTrigger.ClearTriggerEffect(__instance.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left);
+            }
+            if (__instance.CurrentInteractable != null && __instance.CurrentInteractable is FVRFireArm && __instance.m_isBuzzing && (AdaptiveTrigger._rightShotsSoFar > 0 || AdaptiveTrigger._leftShotsSoFar > 0))
+            {
+                if ((AdaptiveTrigger.HeadsetVibration.Value == AdaptiveTrigger.HeadsetVibrationType.OnRecoil || AdaptiveTrigger.HeadsetVibration.Value == AdaptiveTrigger.HeadsetVibrationType.Both) && __instance.m_curBuzz != null)
+                {
+                    AdaptiveTrigger.ApplyHeadsetVibration(__instance.m_curBuzz.BuzzLength, AdaptiveTrigger.HeadsetVibrationFrequency.Value);
+                }
             }
         }
 
+        private static bool IsWeaponEmpty(FVRFireArm w)
+        {
+            bool hasMag = w is Handgun hg ? hg.Magazine != null : (w is BAP bap ? bap.Magazine != null : false);
+            bool magHasRound = w is Handgun hg2 ? hg2.Magazine.HasARound() : (w is BAP bap2 ? bap2.Magazine.HasARound() : false);
+            bool isHammerCocked = w is Handgun hg3 ? hg3.m_isHammerCocked : (w is BAP bap3 ? bap3.m_isHammerCocked : (w is Airgun ag ? ag.m_isHammerCocked : (w is RailTater rt ? rt.m_isHammerCocked : (w is SingleActionRevolver sar ? sar.m_isHammerCocked : false))));
+            bool chamberIsFull = w is Handgun hg4 ? hg4.Chamber.IsFull : (w is BAP bap4 ? bap4.Chamber.IsFull : (w is Airgun ag2 ? ag2.Chamber.IsFull : (w is RailTater rt2 ? rt2.Chamber.IsFull : false)));
+
+            return (hasMag && !magHasRound && !chamberIsFull && !isHammerCocked) || (!hasMag && !chamberIsFull && !isHammerCocked);
+        }
         [HarmonyPatch(typeof(FVRFireArm), "FVRUpdate")]
         [HarmonyPostfix]
         public static void GlobalTriggerEffect(FVRFireArm __instance)
@@ -275,7 +338,7 @@ namespace Niko666
             {
                 if (__instance.savedGrip != null)
                 {
-                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left);
                 }
                 else
                 {
@@ -287,7 +350,7 @@ namespace Niko666
                     {
                         startPos = (byte)Mathf.Clamp(AdaptiveTrigger.OverrideStartPos.Value, 0, 9);
                         endPos = (byte)Mathf.Clamp(AdaptiveTrigger.OverrideEndPos.Value, 0, 9);
-                        AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                        AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                     }
                     else
                         switch (__instance)
@@ -295,9 +358,9 @@ namespace Niko666
                             case ClosedBoltWeapon w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
-                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && ((w.Magazine == null && !w.Chamber.IsFull && !w.IsHammerCocked) || (w.Magazine != null && !w.Magazine.HasARound() && !w.Chamber.IsFull && !w.IsHammerCocked)))
+                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && IsWeaponEmpty(w))
                                 {
-                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left);
                                     break;
                                 }
                                 else
@@ -308,172 +371,173 @@ namespace Niko666
                                         {
                                             startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                             endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
-                                            AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                            AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                         }
                                         else
                                         {
                                             startPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
                                             endPos = (byte)Mathf.Clamp((int)(w.TriggerDualStageThreshold * 10 - 1), 0, 9);
-                                            AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                            AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                         }
                                     }
                                     else
-                                        AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                        AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                     break;
                                 }
+
                             case OpenBoltReceiver w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
-                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && ((w.Magazine == null && !w.Chamber.IsFull && !w.IsHammerCocked) || (w.Magazine != null && !w.Magazine.HasARound() && !w.Chamber.IsFull && !w.IsHammerCocked)))
+                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && IsWeaponEmpty(w))
                                 {
-                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left);
                                     break;
                                 }
                                 else
                                 {
-                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                     break;
                                 }
                             case Handgun w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerBreakThreshold * 10 - 1), 0, 9);
-                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && w.TriggerType == Handgun.TriggerStyle.SA && ((w.Magazine == null && !w.Chamber.IsFull && !w.m_isHammerCocked) || (w.Magazine != null && !w.Magazine.HasARound() && !w.Chamber.IsFull && !w.m_isHammerCocked)))
+                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && IsWeaponEmpty(w))
                                 {
-                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left);
                                     break;
                                 }
                                 else
                                 {
-                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                     break;
                                 }
                             case TubeFedShotgun w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerBreakThreshold * 10 - 1), 0, 9);
-                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && ((w.Magazine == null && !w.Chamber.IsFull && !w.IsHammerCocked) || (w.Magazine != null && !w.Magazine.HasARound() && !w.Chamber.IsFull && !w.IsHammerCocked)))
+                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && IsWeaponEmpty(w))
                                 {
-                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left);
                                     break;
                                 }
                                 else
                                 {
-                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                     break;
                                 }
                             case BoltActionRifle w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
-                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && ((w.Magazine == null && !w.Chamber.IsFull && !w.IsHammerCocked) || (w.Magazine != null && !w.Magazine.HasARound() && !w.Chamber.IsFull && !w.IsHammerCocked)))
+                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && IsWeaponEmpty(w))
                                 {
-                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left);
                                     break;
                                 }
                                 else
                                 {
-                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                     break;
                                 }
                             case BreakActionWeapon w:
                                 startPos = 4;
                                 endPos = 7;
-                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                             case Revolver:
                                 startPos = 2;
                                 endPos = 9;
-                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                             case SingleActionRevolver w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerThreshold * 10 - 2), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerThreshold * 10 - 1), 0, 9);
                                 if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && !w.m_isHammerCocked)
                                 {
-                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left);
                                     break;
                                 }
                                 else
                                 {
-                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                     break;
                                 }
                             case RevolvingShotgun w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
-                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                             case LAPD2019 w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFireThreshold * 10 - 1), 0, 9);
-                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                             case BAP w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
-                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && ((w.Magazine == null && !w.Chamber.IsFull && !w.m_isHammerCocked) || (w.Magazine != null && !w.Magazine.HasARound() && !w.Chamber.IsFull && !w.m_isHammerCocked)))
+                                if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && IsWeaponEmpty(w))
                                 {
-                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left);
                                     break;
                                 }
                                 else
                                 {
-                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                     break;
                                 }
                             case PotatoGun:
                                 startPos = 4;
                                 endPos = 7;
-                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                             case GrappleGun w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerBreakThreshold * 10 - 1), 0, 9);
-                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                             case Airgun w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
                                 if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && !w.m_isHammerCocked)
                                 {
-                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left);
                                     break;
                                 }
                                 else
                                 {
-                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                     break;
                                 }
                             case CarlGustaf w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
-                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                             case RailTater w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
                                 if (AdaptiveTrigger.DisableEffectWhenEmpty.Value && !w.m_isHammerCocked)
                                 {
-                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left);
+                                    AdaptiveTrigger.ClearTriggerEffect(__instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left);
                                     break;
                                 }
                                 else
                                 {
-                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                    AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                     break;
                                 }
                             case FlameThrower w:
                                 startPos = 3;
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
-                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                             case sblp w:
                                 startPos = (byte)Mathf.Clamp((int)(w.TriggerResetThreshold * 10 - 1), 0, 9);
                                 endPos = (byte)Mathf.Clamp((int)(w.TriggerFiringThreshold * 10 - 1), 0, 9);
-                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                             default:
                                 startPos = 2;
                                 endPos = 7;
-                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
                                 break;
                         }
                 }
@@ -495,7 +559,7 @@ namespace Niko666
                     startPos = (byte)Mathf.Clamp(AdaptiveTrigger.OverrideStartPos.Value + 1, 0, 10);
                     endPos = (byte)Mathf.Clamp(AdaptiveTrigger.OverrideEndPos.Value + 1, 0, 10);
                 }
-                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
             }
         }
 
@@ -514,7 +578,7 @@ namespace Niko666
                     startPos = (byte)Mathf.Clamp(AdaptiveTrigger.OverrideStartPos.Value + 1, 0, 10);
                     endPos = (byte)Mathf.Clamp(AdaptiveTrigger.OverrideEndPos.Value + 1, 0, 10);
                 }
-                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? EVRControllerType.Right : EVRControllerType.Left, __instance.m_hand.m_buzztime);
+                AdaptiveTrigger.ApplyTriggerEffect(startPos, endPos, __instance.m_hand.IsThisTheRightHand ? VRControllerType.Right : VRControllerType.Left, __instance.m_hand.m_buzztime);
             }
         }
     }

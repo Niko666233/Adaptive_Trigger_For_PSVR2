@@ -3,7 +3,7 @@
     <!-- TODO: Change these values! -->
     <PropertyGroup>
         <AssemblyName>Niko666.Adaptive_Trigger_For_PSVR2</AssemblyName>
-        <Version>1.2.0</Version>
+        <Version>2.0.0</Version>
         <Authors>Niko666</Authors>
         <AssemblyTitle>Adaptive_Trigger_For_PSVR2</AssemblyTitle>
         <Description>Implemented some Adaptive Trigger effects for chad PSVR2 controller enjoyers. REQUIRES PSVR2 Toolkit TO USE!</Description>
@@ -66,6 +66,9 @@
       <None Update="Properties\Settings.settings">
         <Generator>SettingsSingleFileGenerator</Generator>
         <LastGenOutput>Settings.Designer.cs</LastGenOutput>
+      </None>
+      <None Update="psvr2_toolkit_capi_loader.dll">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       </None>
       <None Update="System.Threading.Tasks.NET35.dll">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

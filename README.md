@@ -1,29 +1,29 @@
-# Battery Life Destroyer 9001: Energy Shortage!
+# Fuk U Sony We Have Access To All Console-Exclusive Features Now
 
 For those who use PSVR2 but didn't know, you can use [PSVR2 Toolkit](https://github.com/BnuuySolutions/PSVR2Toolkit) to enable eye tracking and adaptive triggers etc on PC. There are already a couple of games (and mods) utilize those features so I think we should have this too.
-
-Also it is recommended to use the next-custom-sync branch of PSVR2 Toolkit, which enables PCM haptics by default which is way better than the default "dumb" haptics. It also has custom tracking led sync which in theory can extend battery life. You can download the (currently) newest build from <https://github.com/BnuuySolutions/PSVR2Toolkit/actions/runs/25595697654> (iirc you'll need to log in to GitHub to download it. If expired, go to the Actions tab and find the newest one with custom-controller-sync tag yourself).
 
 ## Features
 
 - Clicky trigger effect with Dual Stage trigger simulation
 - Force feedback when firing, simulating recoil "kicks" (also vibration-based feedback as an alternative)
 - Disable the effects when the gun is empty / when the hammer is not cocked so you'll know when you're out of ammo (buggy, disabled by default)
+- Headset vibration when firing and/or when getting hit
 - Configurable (somewhat), reload the scene to reload the config
 
 ## Known Issues and Limitations
 
-- You need to install [PSVR2 Toolkit](https://github.com/BnuuySolutions/PSVR2Toolkit) for this mod to function!
+- You need to install [PSVR2 Toolkit](https://github.com/BnuuySolutions/PSVR2Toolkit) for this mod to function (Obviously!)
 - My [![State-of-the-art Shitcode](https://img.shields.io/static/v1?label=State-of-the-art&message=Shitcode&color=7B5804)](https://github.com/trekhleb/state-of-the-art-shitcode) will make controllers' batteries drain considerably faster
 - No per-weapon (type) configurations
-- Currently PSVR2 Toolkit has a bug that causes the left controller trigger effect to "stuck" and can't be removed. I've implemented a workaround but it's probably not perfect. Alternatively, you can disable the left controller trigger effect as a whole in the config file.
+- The headset vibration intensity is lowered when full-auto shooting or slamming the trigger, and it does not scale with firearms' actual recoil strength
 - I've never touched real firearms in my life so I don't know how realistic the trigger simulation is. If you have any suggestions, feel free to tell me.
 
 ## I Asked Myself These Questions
 
 ### The mod doesn't work!?
 
-- If you did install PSVR2 Toolkit properly, it's probably because the toolkit's next update will break the mod because of the IPC protocol changes. Please inform me if I didn't update the mod in time.
+- **The mod has migrated to the new CAPI system, if you're using an older version of PSVR2 Toolkit, you'll need to update it for this mod to work.**
+- Headset vibration requires [Jailbraking your headset](https://github.com/BnuuySolutions/PSVR2Toolkit/wiki/Jailbreaking-your-headset).
 
 ### It's really useless and glitchy
 
@@ -41,5 +41,9 @@ Also it is recommended to use the next-custom-sync branch of PSVR2 Toolkit, whic
 - [H3VRPluginTemplate](https://github.com/H3VR-Modding/H3VRPluginTemplate)
 - Everybody in H3VR community, especially Sora101Ven for the feedback
 - You
+
+## Generative AI Disclosure
+
+Some parts of the mod was created using CodeGeeX GLM generative AI model because I'm a dumbass and too lazy to debug, but I did the manual code review and testing to ensure the mod works as intended.
 
 [![ko-fi](https://storage.ko-fi.com/cdn/brandasset/v2/support_me_on_kofi_beige.png)](https://ko-fi.com/niko666233)

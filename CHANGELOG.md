@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.0 La Vibrator
+
+- Migrate to the new CAPI
+- Add Headset Vibration support
+
 ## 1.2.0 Not-So-Smart Trigger
 
 - Tried to implement Dual Stage trigger effect and disable effect when the gun is empty (originally I want to make it disable effects when the hammer is not cocked but it'll destroy recoil effect so I added the detection of magazines and that causes even more problems)
